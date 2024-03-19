@@ -1,0 +1,136 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+'CUSTOMER:  METRO STEEL & PIPE SUPPLY, INC
+'ARC#6589
+
+'Metro Steel would like certain customers to be placed on credit hold if they have any amount of
+'payment that is greater than 5 days late. For example, if the terms are Net 30, and they are past due
+'more than 35 days than the customer master will be flagged as CREDIT HOLD.
+
+'hook: custom hook, run automatically, daily at 1AM
+'This program checks for late payments and put customers on credit hold
+Program.Sub.Main.Start
+f.Intrinsic.Control.Try
+	v.Local.sSQL.Declare(String)
+	v.Local.sRet.Declare(String)
+	v.Local.iCounter.Declare(Long)
+	v.Local.sMsg.Declare(String)
+	v.Local.sLog.Declare(String)
+	
+	f.ODBC.Connection!Con.OpenCompanyConnection(240)
+'		v.Local.sSQL.Set("select RTRIM(CUSTOMER) CUST_ID, INVOICE, DATEDIFF(day, DATE_INVOICE, CURDATE())-TERMS_DUE_DAYS-5 DAY_DIFF from V_AR_OPEN_ITEMS AR left join V_AR_TERMS T on AR.TERMS_CODE = T.TERMS_CODE where INVOICE = (select MAX(INVOICE) from V_AR_OPEN_ITEMS REF where AR.CUSTOMER = REF.CUSTOMER) and RTRIM(CUSTOMER) not in (select RTRIM(CUSTOMER) from V_CUSTOMER_SALES where PAYMENT_TERMS='3') and RTRIM(CUSTOMER) not in (select RTRIM(CUST_ID) from GCG_6589_CRDHLD_CUST where CRDHOLD=1) and RTRIM(CUSTOMER) in (select RTRIM(CUSTOMER) from V_AR_OPEN_ITEMS group by RTRIM(CUSTOMER) having SUM(AMT_INVOICE) > 0) and AR.TERMS_CODE <> '3' and AR.TERMS_CODE <>'' and AR.BATCH_CODE='10' and AMT_INVOICE > 0 and DATE_INVOICE is not NULL group by CUSTOMER, DAY_DIFF, INVOICE having DAY_DIFF >= 0")
+
+		v.Local.sSQL.Set("select RTRIM(CUSTOMER) CUST_ID, INVOICE, AMT_INVOICE, DATE_INVOICE, T.TERMS_DUE_DAYS, DATEDIFF(day, DATE_INVOICE, CURDATE())-TERMS_DUE_DAYS-5 DAY_DIFF from V_AR_OPEN_ITEMS AR left join V_AR_TERMS T on AR.TERMS_CODE = T.TERMS_CODE where INVOICE in (select INVOICE from V_AR_OPEN_ITEMS group by INVOICE having SUM(AMT_INVOICE) > 0)and AR.TERMS_CODE <> '3' and AR.TERMS_CODE <>'' group by CUST_ID, INVOICE, DATE_INVOICE, T.TERMS_DUE_DAYS, AMT_INVOICE, DAY_DIFF having DAY_DIFF>0")
+		
+		f.Intrinsic.Control.If(v.DataTable.dtCust.Exists)
+			f.Data.Datatable.Close("dtCust")
+		f.Intrinsic.Control.EndIf
+		f.Data.Datatable.CreateFromSQL("dtCust", "Con", v.Local.sSQL, True)
+		
+		'if any
+		f.Intrinsic.Control.If(v.DataTable.dtCust.RowCount,>,0)
+		
+			'select distinct
+			f.Data.DataView.Create("dtCust", "dvCust")
+			f.Data.DataView.ToDataTableDistinct("dtCust", "dvCust", "dtCustDistinct", "CUST_ID")
+			f.Data.DataView.Close("dtCust", "dvCust")
+			
+			'log
+			f.Intrinsic.String.Build("Found {0} Customer(s) with late payments.", v.DataTable.dtCustDistinct.RowCount, v.Local.sMsg)
+			f.Intrinsic.Control.CallSub(ErrorLog, "argMsg", v.Local.sMsg)
+		
+			f.Intrinsic.Control.For(v.Local.iCounter,0, v.DataTable.dtCustDistinct.RowCount--, 1)	
+				f.Intrinsic.String.Build("update CUSTOMER_MASTER set FLAG_CREDIT_HOLD = 'Y' where REC='1' and RTRIM(CUSTOMER)='{0}'", v.DataTable.dtCustDistinct(v.Local.iCounter).CUST_ID!FieldValTrim, v.Local.sSQL)
+				f.ODBC.Connection!Con.Execute(v.Local.sSQL)
+				'log
+				f.Intrinsic.String.Build("{1}Put customer#{0} on Credit Hold.", v.DataTable.dtCustDistinct(v.Local.iCounter).CUST_ID!FieldValTrim, v.Ambient.NewLine, v.Local.sMsg)
+				f.Intrinsic.Control.CallSub(ErrorLog, "argMsg", v.Local.sMsg)
+			f.Intrinsic.Control.Next(v.Local.iCounter)
+			
+			v.Local.iCounter.Set(0)
+			
+			f.Intrinsic.Control.For(v.Local.iCounter, v.DataTable.dtCust.RowCount--,1)
+				f.Intrinsic.String.Build("{1}{0}Put customer#{2} on Credit Hold for invoice#{3}", v.Ambient.NewLine, v.Local.sLog, v.DataTable.dtCust(v.Local.iCounter).CUST_ID!FieldValTrim, v.DataTable.dtCust(v.Local.iCounter).INVOICE!FieldValTrim, v.Local.sLog)
+			f.Intrinsic.Control.Next(v.Local.iCounter)
+			
+			f.Intrinsic.Control.CallSub(ExportLog, "argLog", v.Local.sLog)			
+			
+		f.Intrinsic.Control.EndIf
+		
+		f.ODBC.Connection!Con.Close
+	
+f.Intrinsic.Control.Catch
+	'log
+	f.Intrinsic.Control.CallSub(ErrorLog, "argMsg", v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ExportLog.Start
+v.Local.sFileName.Declare(String)
+v.Local.isFileExists.Declare(Boolean)
+v.Local.isDirExists.Declare(Boolean)
+
+	'Add time stamp to file name
+	f.Intrinsic.String.Build("{0}\{1}\{2}", v.Caller.FilesDir, "6589", "Error Log", v.Local.sFileName)
+	
+	f.Intrinsic.File.DirExists(v.Local.sFileName, v.Local.isDirExists)
+	
+	f.Intrinsic.Control.If(v.Local.isDirExists,=,False)
+		f.Intrinsic.File.CreateDir(v.Local.sFileName)
+	f.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.String.Build("{0}\{1}{2}", v.Local.sFileName, "Credit Hold - Detail ",v.Ambient.Now.FormatYYYYMMDD,v.Local.sFileName)
+	f.Intrinsic.String.Build("{0}{1}",v.Local.sFileName,".txt",v.Local.sFileName)
+	
+	'check file exist
+	f.Intrinsic.File.Exists(v.Local.sFileName, v.Local.isFileExists)
+	
+	f.Intrinsic.Control.If(v.Local.isFileExists,=,false)
+		f.Intrinsic.File.String2File(v.Local.sFileName, v.Global.sLog)
+	f.Intrinsic.Control.EndIf
+
+Program.Sub.ExportLog.End
+
+'write to log
+'arg: argMsg
+Program.Sub.ErrorLog.Start
+v.Local.sFileName.Declare(String)
+v.Local.isFileExists.Declare(Boolean)
+v.Local.isDirExists.Declare(Boolean)
+v.Local.sLogMsg.Declare(String)
+
+	'Add time stamp to file name
+	f.Intrinsic.String.Build("{0}\{1}\{2}", v.Caller.FilesDir, "6589", "Error Log", v.Local.sFileName)
+	
+	f.Intrinsic.File.DirExists(v.Local.sFileName, v.Local.isDirExists)
+	
+	f.Intrinsic.Control.If(v.Local.isDirExists,=,False)
+		f.Intrinsic.File.CreateDir(v.Local.sFileName)
+	f.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.String.Build("{0}\{1}{2}", v.Local.sFileName, "Credit Hold Log  ",v.Ambient.Now.FormatYYYYMMDD,v.Local.sFileName)
+	
+	f.Intrinsic.String.Build("{0}{1}",v.Local.sFileName,".txt",v.Local.sFileName)
+	
+	'check file exist
+	f.Intrinsic.File.Exists(v.Local.sFileName, v.Local.isFileExists)
+	
+	f.Intrinsic.Control.If(v.Local.isFileExists,=,False)
+		f.Intrinsic.File.String2File(v.Local.sFileName, "Start Log")
+		f.Intrinsic.File.Append2File(v.Local.sFileName, v.Ambient.NewLine)
+		f.Intrinsic.File.Append2File(v.Local.sFileName, "********************")
+		f.Intrinsic.File.Append2File(v.Local.sFileName, v.Ambient.NewLine)
+		
+	f.Intrinsic.Control.EndIf
+	
+	'append
+	v.Local.sLogMsg.Set(v.Args.argMsg)
+	f.Intrinsic.String.Build("{0} {1}: {2}", v.Ambient.Now.FormatMM/DD/YYYY, v.Ambient.Now.FormatHH:NN:SS, v.Local.sLogMsg, v.Local.sLogMsg)
+	f.Intrinsic.File.Append2File(v.Local.sFileName, v.Local.sLogMsg)
+
+Program.Sub.ErrorLog.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$nle$}$20220120152900722$}$kjzCRYkA6UEoRnCwndYnRavCwN7ubP9bblcZ0TXLrJmPzRS7/iB6ZQN7YnMwHmMA
+Program.Sub.Comments.End
