@@ -1,0 +1,55 @@
+﻿Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+'CUSTOMER:  METRO STEEL & PIPE SUPPLY, INC
+'ARC#6589
+
+'Metro Steel would like certain customers to be placed on credit hold if they have any amount of
+'payment that is greater than 5 days late. For example, if the terms are Net 30, and they are past due
+'more than 35 days than the customer master will be flagged as CREDIT HOLD.
+
+'hook: 14385 - POST SAVE
+'This program checks and saves if a customer is excluded from 5-day late program
+
+Program.Sub.Main.Start
+f.Intrinsic.Control.Try
+	v.Local.sSQL.Declare(String)
+	v.Local.sRet.Declare(String)
+	v.Local.sCust.Declare(String)
+	v.Local.sExcluded.Declare(String)
+	
+	v.Local.sCust.Set(v.Passed.000002)
+	
+	'check if there is a valid customer selected
+	f.Intrinsic.Control.If(v.Local.sCust.Trim,!=,"")
+		'checkbox value
+		f.Intrinsic.Control.If(v.Passed.GAB-CHK-1,=,"Y")
+			v.Local.sExcluded.Set(1)
+		f.Intrinsic.Control.Else
+			v.Local.sExcluded.Set(0)
+		f.Intrinsic.Control.EndIf
+		
+		'check if record exists
+		f.ODBC.Connection!Con.OpenCompanyConnection
+		f.Intrinsic.String.Build("select * from GCG_6589_CRDHLD_CUST where RTRIM(CUST_ID)='{0}'", v.Local.sCust.Trim, v.Local.sSQL)
+		v.Local.sRet.Set("")
+		f.ODBC.Connection!Con.ExecuteAndReturn(v.Local.sSQL, v.Local.sRet)
+		'record exists => update
+		f.Intrinsic.Control.If(v.Local.sRet,=,"")
+			f.Intrinsic.String.Build("insert into GCG_6589_CRDHLD_CUST (CUST_ID, CRDHOLD) values('{0}','{1}')", v.Local.sCust, v.Local.sExcluded, v.Local.sSQL)
+		'record does not exist => insert
+		f.Intrinsic.Control.Else
+			f.Intrinsic.String.Build("update GCG_6589_CRDHLD_CUST set CRDHOLD='{1}' where RTRIM(CUST_ID)='{0}'", v.Local.sCust, v.Local.sExcluded, v.Local.sSQL)			
+		f.Intrinsic.Control.EndIf
+		f.ODBC.Connection!Con.Execute(v.Local.sSQL)
+		f.ODBC.Connection!Con.Close
+	f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.Catch
+	f.Intrinsic.UI.Msgbox(v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$nle$}$20220118160922466$}$kjzCRYkA6UEoRnCwndYnRavCwN7ubP9bYuzQWboQCrIhGaXEy7YESoXJtUJ56y0n
+Program.Sub.Comments.End
